@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Boxing Timer</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body {
+            background-color: #1a1a1a;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            height: 100vh;
+            padding: 40px 20px;
+            overflow: hidden;
+        }
+        .status-badge {
+            background-color: #333;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            border: 2px solid #555;
+            transition: all 0.3s ease;
+        }
+        .status-round {
+            background-color: #d32f2f;
+            border-color: #f44336;
+            color: white;
+            box-shadow: 0 0 15px rgba(244, 67, 54, 0.4);
+        }
+        .status-interval {
+            background-color: #388e3c;
+            border-color: #4caf50;
+            color: white;
+            box-shadow: 0 0 15px rgba(76, 175, 80, 0.4);
+        }
+        .timer-display {
+            font-size: 5.5rem;
+            font-weight: 800;
+            font-variant-numeric: tabular-nums;
+            margin: 20px 0;
+            letter-spacing: -2px;
+            text-shadow: 0 0 20px rgba(255,255,255,0.1);
+        }
+        .round-counter {
+            font-size: 1.5rem;
+            color: #aaa;
+            font-weight: 500;
+        }
+        .controls {
+            display: flex;
+            gap: 20px;
+            width: 100%;
+            max-width: 400px;
+        }
+        button {
+            flex: 1;
+            padding: 18px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: transform 0.1s, opacity 0.2s;
+        }
+        button:active {
+            transform: scale(0.96);
+        }
+        .btn-start {
+            background-color: #ff9800;
+            color: #000;
+        }
+        .btn-pause {
+            background-color: #757575;
+            color: #fff;
+        }
+        .btn-reset {
+            background-color: #212121;
+            color: #f44336;
+            border: 1px solid #f44336;
+        }
+        /* 設定エリア */
+        .settings {
+            width: 100%;
+            max-width: 400px;
+            background: #262626;
+            padding: 15px;
+            border-radius: 12px;
+            font-size: 0.9rem;
+        }
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .setting-row:last-child {
+            margin-bottom: 0;
+        }
+        .setting-row input {
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 6px;
+            width: 70px;
+            text-align: center;
+            font-size: 1rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="statusBadge" class="status-badge">READY</div>
+
+    <div>
+        <div id="timerDisplay" class="timer-display">03:00</div>
+        <div style="text-align: center;">
+            <span id="roundCounter" class="round-counter">ROUND 1</span>
+        </div>
+    </div>
+
+    <!-- 設定エリア（トレーニング前に調整可能だぜ） -->
+    <div class="settings" id="settingsArea">
+        <div class="setting-row">
+            <label>ラウンド時間 (秒):</label>
+            <input type="number" id="roundInput" value="180" min="10">
+        </div>
+        <div class="setting-row">
+            <label>インターバル時間 (秒):</label>
+            <input type="number" id="intervalInput" value="60" min="5">
+        </div>
+    </div>
+
+    <div class="controls">
+        <button id="resetBtn" class="btn-reset">RESET</button>
+        <button id="startBtn" class="btn-start">START</button>
+    </div>
+
+    <script>
+        // タイマーの状態管理
+        let currentMode = 'READY'; // READY, ROUND, INTERVAL, PAUSED
+        let previousMode = 'READY'; // 一時停止からの復帰用
+        let timeRemaining = 180;
+        let currentRound = 1;
+        let timerInterval = null;
+
+        // 音声合成（ボイス）の準備
+        const synth = window.speechSynthesis;
+        
+        // iOSのロック対策用オーディオコンテキスト（ダミー音を鳴らす）
+        let audioCtx = null;
+
+        const statusBadge = document.getElementById('statusBadge');
+        const timerDisplay = document.getElementById('timerDisplay');
+        const roundCounter = document.getElementById('roundCounter');
+        const startBtn = document.getElementById('startBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const settingsArea = document.getElementById('settingsArea');
+        
+        const roundInput = document.getElementById('roundInput');
+        const intervalInput = document.getElementById('intervalInput');
+
+        // 表示を更新する関数
+        function updateDisplay() {
+            let mins = Math.floor(timeRemaining / 60);
+            let secs = timeRemaining % 60;
+            timerDisplay.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            roundCounter.textContent = `ROUND ${currentRound}`;
+        }
+
+        // ボイスを喋らせる関数
+        function speak(text) {
+            if (synth.speaking) {
+                synth.cancel(); // 前の音声をキャンセルして今すぐ喋る
+            }
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'ja-JP';
+            utterance.rate = 1.1; // 少し早口でキレよく
+            synth.speak(utterance);
+        }
+
+        // iOSのバックグラウンド/スリープ制限をハックするためのダミー音再生
+        function initAudioHack() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            // 1秒ごとに一瞬だけ無音を再生してOSにアプリが生きていることをアピール
+            const buffer = audioCtx.createBuffer(1, 1, 22050);
+            const source = audioCtx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioCtx.destination);
+            source.start();
+        }
+
+        function startTimer() {
+            initAudioHack();
+            settingsArea.style.pointerEvents = 'none'; // 動作中は設定不可
+            settingsArea.style.opacity = '0.5';
+
+            if (currentMode === 'READY') {
+                currentMode = 'ROUND';
+                timeRemaining = parseInt(roundInput.value);
+                statusBadge.textContent = 'ROUND';
+                statusBadge.className = 'status-badge status-round';
+                speak("ファースト・ラウンド、ファイッ！");
+            } else if (currentMode === 'PAUSED') {
+                currentMode = previousMode;
+                if (currentMode === 'ROUND') {
+                    statusBadge.textContent = 'ROUND';
+                    statusBadge.className = 'status-badge status-round';
+                } else {
+                    statusBadge.textContent = 'INTERVAL';
+                    statusBadge.className = 'status-badge status-interval';
+                }
+            }
+
+            startBtn.textContent = 'PAUSE';
+            startBtn.className = 'btn-pause';
+
+            timerInterval = setInterval(() => {
+                timeRemaining--;
+
+                // 【ここがお前のこだわり仕様だぜ！】
+                if (currentMode === 'ROUND') {
+                    if (timeRemaining === 90) {
+                        speak("残り、きゅうじゅう秒！");
+                    } else if (timeRemaining === 30) {
+                        speak("ラスト、さんじゅう秒！追い込め！");
+                    }
+                }
+
+                if (timeRemaining <= 0) {
+                    clearInterval(timerInterval);
+                    
+                    if (currentMode === 'ROUND') {
+                        // ラウンド終了 ➔ インターバルへ
+                        currentMode = 'INTERVAL';
+                        timeRemaining = parseInt(intervalInput.value);
+                        statusBadge.textContent = 'INTERVAL';
+                        statusBadge.className = 'status-badge status-interval';
+                        speak("そこまで！インターバルだ。");
+                        updateDisplay();
+                        startTimer(); // 自動で次のインターバル開始
+                    } else if (currentMode === 'INTERVAL') {
+                        // インターバル終了 ➔ 次のラウンドへ
+                        currentRound++;
+                        currentMode = 'ROUND';
+                        timeRemaining = parseInt(roundInput.value);
+                        statusBadge.textContent = 'ROUND';
+                        statusBadge.className = 'status-badge status-round';
+                        speak(`ラウンド、${currentRound}、ファイッ！`);
+                        updateDisplay();
+                        startTimer(); // 自動で次のラウンド開始
+                    }
+                } else {
+                    updateDisplay();
+                }
+            }, 1000);
+        }
+
+        function pauseTimer() {
+            clearInterval(timerInterval);
+            previousMode = currentMode;
+            currentMode = 'PAUSED';
+            startBtn.textContent = 'START';
+            startBtn.className = 'btn-start';
+            statusBadge.textContent = 'PAUSED';
+            statusBadge.className = 'status-badge';
+            speak("タイムアウト");
+        }
+
+        // ボタンのイベントリスナー
+        startBtn.addEventListener('click', () => {
+            if (currentMode === 'ROUND' || currentMode === 'INTERVAL') {
+                pauseTimer();
+            } else {
+                startTimer();
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            clearInterval(timerInterval);
+            currentMode = 'READY';
+            previousMode = 'READY';
+            currentRound = 1;
+            timeRemaining = parseInt(roundInput.value);
+            startBtn.textContent = 'START';
+            startBtn.className = 'btn-start';
+            statusBadge.textContent = 'READY';
+            statusBadge.className = 'status-badge';
+            settingsArea.style.pointerEvents = 'auto';
+            settingsArea.style.opacity = '1';
+            updateDisplay();
+            speak("リセットしたのぜ");
+        });
+
+        // 初期表示
+        updateDisplay();
+    </script>
+</body>
+</html>
